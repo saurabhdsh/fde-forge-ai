@@ -23,7 +23,9 @@ def _service_with_profile(domains: list[str] | None, courses: list | None = None
 @pytest.mark.asyncio
 async def test_normalize_domains() -> None:
     service = CourseService(MagicMock())
-    assert service.normalize_domains(["Healthcare", "life-sciences", "technical", "other"]) == [
+    assert service.normalize_domains(
+        ["Healthcare", "life-sciences", "technical", "Pharma", "AWS", "other"]
+    ) == [
         "healthcare",
         "life_sciences",
         "technical",

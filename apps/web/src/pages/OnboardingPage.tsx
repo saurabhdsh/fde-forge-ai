@@ -88,10 +88,16 @@ export function OnboardingPage() {
 
   const saveProfile = useMutation({
     mutationFn: async () => {
+      if (!form.domain_preferences.length) {
+        throw new Error("Select at least one domain (Healthcare, Life sciences, or Technical).");
+      }
       const { data } = await api.patch<ApiEnvelope<LearnerProfile>>("/learners/me/profile", form);
       return data.data;
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["learner-profile"] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["learner-profile"] });
+      qc.invalidateQueries({ queryKey: ["courses-catalog"] });
+    },
   });
 
   const uploadResume = useMutation({
@@ -146,6 +152,7 @@ export function OnboardingPage() {
       qc.invalidateQueries({ queryKey: ["learner-skills"] });
       qc.invalidateQueries({ queryKey: ["learner-profile"] });
       qc.invalidateQueries({ queryKey: ["learner-extraction"] });
+      qc.invalidateQueries({ queryKey: ["courses-catalog"] });
     },
   });
 
@@ -295,11 +302,16 @@ export function OnboardingPage() {
           <Button
             variant="contained"
             onClick={() => saveProfile.mutate()}
-            disabled={saveProfile.isPending}
+            disabled={saveProfile.isPending || form.domain_preferences.length === 0}
             sx={{ alignSelf: "flex-start" }}
           >
-            Save profile
+            {saveProfile.isPending ? "Saving…" : "Save profile"}
           </Button>
+          {form.domain_preferences.length === 0 && (
+            <Alert severity="warning">
+              Select at least one domain above — Domain courses will not appear until you save this.
+            </Alert>
+          )}
         </Stack>
       </Section>
 

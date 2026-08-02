@@ -54,10 +54,50 @@ DOMAIN_HINTS = {
         "description": "R&D-to-regulatory path, GxP, clinical data, and AI validation for LS FDEs.",
     },
     "technical": {
-        "title_hint": "Technical FDE Foundations",
-        "description": "Enterprise delivery, GenAI systems, secure SDLC, and production readiness.",
+        "title_hint": "Technical FDE Super-Course",
+        "description": "Architecture, GenAI delivery, cloud, and production hardening for technical FDEs.",
     },
 }
+
+
+def normalize_domain_preferences(prefs: list | None) -> list[str]:
+    """Map free-text / UI domain labels onto supported course domains."""
+    prefs = prefs or []
+    out: list[str] = []
+    for d in prefs:
+        key = str(d).strip().lower().replace(" ", "_").replace("-", "_")
+        if key in {
+            "life_science",
+            "lifesciences",
+            "life_sciences",
+            "pharma",
+            "pharmaceutical",
+            "biotech",
+        }:
+            key = "life_sciences"
+        elif key in {
+            "health",
+            "health_care",
+            "healthcare",
+            "payer",
+            "provider",
+            "clinical",
+        }:
+            key = "healthcare"
+        elif key in {
+            "tech",
+            "technical",
+            "technology",
+            "engineering",
+            "software",
+            "genai",
+            "ai",
+            "enterprise",
+        }:
+            key = "technical"
+        if key in SUPPORTED_DOMAINS and key not in out:
+            out.append(key)
+    return out
 
 
 class CourseService:
@@ -71,17 +111,7 @@ class CourseService:
         self.curriculum = CurriculumService(session)
 
     def normalize_domains(self, prefs: list | None) -> list[str]:
-        prefs = prefs or []
-        out: list[str] = []
-        for d in prefs:
-            key = str(d).strip().lower().replace(" ", "_").replace("-", "_")
-            if key in {"life_science", "lifesciences", "life_sciences"}:
-                key = "life_sciences"
-            if key in {"health", "health_care", "healthcare"}:
-                key = "healthcare"
-            if key in SUPPORTED_DOMAINS and key not in out:
-                out.append(key)
-        return out
+        return normalize_domain_preferences(prefs)
 
     async def required_domains(self, user_id: UUID, organization_id: UUID) -> list[str]:
         profile = await self.learners.get_by_user(user_id, organization_id)

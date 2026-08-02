@@ -7,6 +7,7 @@ from pathlib import Path
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.ai.gateway import AIGateway, hallucination_risk_score, sanitize_for_prompt
 from app.ai.prompts.resume_extraction import PROMPT_VERSION, SYSTEM_PROMPT, build_user_prompt
@@ -32,6 +33,7 @@ from app.schemas.learner import (
 )
 from app.schemas.skills import LearnerSkillOut
 from app.services.audit_service import AuditService
+from app.services.course_service import normalize_domain_preferences
 from app.services.document_extraction import DocumentExtractionService
 from app.services.storage_service import StorageService
 
@@ -83,7 +85,6 @@ class LearnerService:
         for field in (
             "target_fde_role",
             "career_interests",
-            "domain_preferences",
             "technical_experience",
             "project_experience",
             "domain_experience",
@@ -96,6 +97,15 @@ class LearnerService:
             if value is not None:
                 setattr(profile, field, value)
 
+        if payload.domain_preferences is not None:
+            normalized = normalize_domain_preferences(list(payload.domain_preferences))
+            if payload.domain_preferences and not normalized:
+                raise ValidationAppError(
+                    "Domain preferences must include healthcare, life_sciences, and/or technical"
+                )
+            profile.domain_preferences = normalized
+            flag_modified(profile, "domain_preferences")
+
         if payload.consent_privacy is not None:
             profile.consent_privacy = payload.consent_privacy
         if payload.consent_ai_processing is not None:
@@ -103,10 +113,12 @@ class LearnerService:
         if profile.consent_privacy and profile.consent_ai_processing:
             profile.consent_timestamp = datetime.now(UTC)
 
+        domains_ok = bool(normalize_domain_preferences(list(profile.domain_preferences or [])))
         if (
             profile.consent_privacy
             and profile.consent_ai_processing
             and profile.target_fde_role
+            and domains_ok
         ):
             profile.onboarding_status = "profile_complete"
             profile.profile_completed_at = datetime.now(UTC)
@@ -396,8 +408,17 @@ class LearnerService:
         profile.domain_experience = {"domains": confirmed.domain_experience}
         if confirmed.suggested_target_roles and not profile.target_fde_role:
             profile.target_fde_role = confirmed.suggested_target_roles[0]
-        if confirmed.suggested_domains:
-            profile.domain_preferences = confirmed.suggested_domains
+        # Never wipe learner-selected domains with free-text AI suggestions.
+        # Only seed domains when the profile has none yet.
+        existing_domains = normalize_domain_preferences(list(profile.domain_preferences or []))
+        if existing_domains:
+            profile.domain_preferences = existing_domains
+            flag_modified(profile, "domain_preferences")
+        else:
+            seeded = normalize_domain_preferences(list(confirmed.suggested_domains or []))
+            if seeded:
+                profile.domain_preferences = seeded
+                flag_modified(profile, "domain_preferences")
         profile.skills_confirmed_at = datetime.now(UTC)
         profile.onboarding_status = "skills_confirmed"
 
