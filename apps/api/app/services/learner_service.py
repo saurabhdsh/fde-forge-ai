@@ -401,12 +401,14 @@ class LearnerService:
         profile.skills_confirmed_at = datetime.now(UTC)
         profile.onboarding_status = "skills_confirmed"
 
-        # Map extracted skills onto taxonomy where possible; create learner_skills
+        # Map extracted skills onto taxonomy; create custom skills when unmatched
+        mapped = 0
         for extracted in confirmed.skills:
-            skill = await self._resolve_skill(extracted.name, extracted.category)
-            if not skill:
-                # Store unmatched under a generic skill note via creating ad-hoc mapping skip
-                continue
+            skill = await self._resolve_or_create_skill(
+                name=extracted.name,
+                category=extracted.category,
+                organization_id=organization_id,
+            )
             entity = LearnerSkill(
                 user_id=user_id,
                 organization_id=organization_id,
@@ -419,6 +421,12 @@ class LearnerService:
                 last_assessed_at=datetime.now(UTC),
             )
             await self.skills.upsert_learner_skill(entity)
+            mapped += 1
+
+        if mapped == 0 and confirmed.skills:
+            raise ValidationAppError(
+                "Could not persist any confirmed skills. Re-check the skill list and try again."
+            )
 
         await self.session.flush()
         await self.audit.log(
@@ -429,21 +437,135 @@ class LearnerService:
             actor_id=actor_id,
             after={
                 "skills_count": len(confirmed.skills),
+                "mapped_count": mapped,
                 "status": "confirmed",
             },
             correlation_id=correlation_id,
             ip_address=ip_address,
             user_agent=user_agent,
         )
+        logger.info(
+            "skills_confirmed",
+            user_id=str(user_id),
+            extracted=len(confirmed.skills),
+            mapped=mapped,
+        )
         return await self.list_learner_skills(user_id, organization_id)
 
     async def _resolve_skill(self, name: str, category: str | None) -> Skill | None:
-        found = await self.skills.get_skill_by_name_ci(name)
+        aliases = {
+            "python": "python_programming",
+            "py": "python_programming",
+            "aws": "cloud_aws",
+            "amazon web services": "cloud_aws",
+            "cloud": "cloud_aws",
+            "postgres": "postgresql",
+            "postgresql": "postgresql",
+            "react.js": "react",
+            "reactjs": "react",
+            "node": "typescript",
+            "nodejs": "typescript",
+            "node.js": "typescript",
+            "llm": "generative_ai",
+            "genai": "generative_ai",
+            "gen ai": "generative_ai",
+            "rag": "rag_engineering",
+            "fastapi": "fastapi",
+            "rest": "rest_apis",
+            "rest api": "rest_apis",
+            "rest apis": "rest_apis",
+            "ml": "machine_learning",
+            "devops": "devops",
+            "docker": "devops",
+            "kubernetes": "devops",
+            "k8s": "devops",
+            "prompt": "prompt_engineering",
+            "hipaa": "hipaa",
+            "fhir": "fhir",
+        }
+        cleaned = (name or "").strip()
+        if not cleaned:
+            return None
+
+        found = await self.skills.get_skill_by_name_ci(cleaned)
         if found:
             return found
-        # Fuzzy-ish: try code from normalized name
-        code = name.lower().replace(" ", "_").replace("/", "_")[:120]
-        return await self.skills.get_skill_by_code(code)
+
+        code = cleaned.lower().replace(" ", "_").replace("/", "_").replace("-", "_")[:120]
+        found = await self.skills.get_skill_by_code(code)
+        if found:
+            return found
+
+        alias = aliases.get(cleaned.lower())
+        if alias:
+            found = await self.skills.get_skill_by_code(alias)
+            if found:
+                return found
+
+        # Try category as weak hint via domain/category filter — fall through
+        _ = category
+        return None
+
+    async def _resolve_or_create_skill(
+        self,
+        *,
+        name: str,
+        category: str | None,
+        organization_id: UUID,
+    ) -> Skill:
+        found = await self._resolve_skill(name, category)
+        if found:
+            return found
+
+        pillar_code = "ai_genai"
+        cat = (category or "").lower()
+        if any(k in cat for k in ("health", "clinical", "fhir", "hipaa")):
+            pillar_code = "healthcare"
+        elif any(k in cat for k in ("life", "pharma", "clinical")):
+            pillar_code = "life_sciences"
+        elif any(k in cat for k in ("data", "etl", "warehouse")):
+            pillar_code = "data_knowledge"
+        elif any(k in cat for k in ("security", "compliance", "rai")):
+            pillar_code = "security_rai"
+        elif any(k in cat for k in ("consult", "stakeholder")):
+            pillar_code = "consulting"
+        elif any(k in cat for k in ("comm", "leader", "present")):
+            pillar_code = "communication"
+        elif any(k in cat for k in ("soft", "enterprise", "backend", "frontend", "swe")):
+            pillar_code = "enterprise_swe"
+
+        pillar = await self.skills.get_pillar_by_code(pillar_code)
+        if not pillar:
+            pillar = await self.skills.get_first_pillar()
+        if not pillar:
+            raise ValidationAppError("Skill taxonomy is not seeded; cannot confirm skills")
+
+        slug = (
+            name.strip()
+            .lower()
+            .replace(" ", "_")
+            .replace("/", "_")
+            .replace("-", "_")
+        )
+        slug = "".join(ch for ch in slug if ch.isalnum() or ch == "_")[:80] or "skill"
+        code = f"custom_{slug}"[:120]
+        # Avoid unique collisions on re-confirm
+        existing_code = await self.skills.get_skill_by_code(code)
+        if existing_code:
+            return existing_code
+
+        skill = Skill(
+            code=code,
+            name=name.strip()[:255],
+            description=f"Created from resume confirmation ({name.strip()})",
+            pillar_id=pillar.id,
+            category=(category or "general")[:100],
+            domain="general",
+            difficulty="foundational",
+            organization_id=organization_id,
+            is_active=True,
+        )
+        return await self.skills.create_skill(skill)
 
     async def list_learner_skills(
         self, user_id: UUID, organization_id: UUID

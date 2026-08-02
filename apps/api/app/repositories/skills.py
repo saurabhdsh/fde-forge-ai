@@ -2,7 +2,7 @@
 
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -31,10 +31,44 @@ class SkillsRepository:
         return result.scalar_one_or_none()
 
     async def get_skill_by_name_ci(self, name: str) -> Skill | None:
+        needle = (name or "").strip().lower()
+        if not needle:
+            return None
+        # Portable across Postgres + SQLite (ilike is weaker on SQLite)
         result = await self.session.execute(
-            select(Skill).where(Skill.name.ilike(name))
+            select(Skill).where(func.lower(Skill.name) == needle)
+        )
+        found = result.scalars().first()
+        if found:
+            return found
+        # Partial match: "Python" ↔ "Python Programming"
+        result = await self.session.execute(
+            select(Skill).where(
+                Skill.is_active.is_(True),
+                or_(
+                    func.lower(Skill.name).like(f"%{needle}%"),
+                    func.lower(Skill.code).like(f"%{needle.replace(' ', '_')}%"),
+                ),
+            )
         )
         return result.scalars().first()
+
+    async def get_pillar_by_code(self, code: str) -> CompetencyPillar | None:
+        result = await self.session.execute(
+            select(CompetencyPillar).where(CompetencyPillar.code == code)
+        )
+        return result.scalar_one_or_none()
+
+    async def get_first_pillar(self) -> CompetencyPillar | None:
+        result = await self.session.execute(
+            select(CompetencyPillar).order_by(CompetencyPillar.sort_order).limit(1)
+        )
+        return result.scalar_one_or_none()
+
+    async def create_skill(self, skill: Skill) -> Skill:
+        self.session.add(skill)
+        await self.session.flush()
+        return skill
 
     async def list_levels(self) -> list[SkillLevel]:
         result = await self.session.execute(select(SkillLevel).order_by(SkillLevel.rank))
