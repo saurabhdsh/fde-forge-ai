@@ -8,6 +8,7 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 import boto3
+from botocore.config import Config
 from botocore.exceptions import BotoCoreError, ClientError
 from pydantic import BaseModel, ValidationError
 
@@ -72,7 +73,14 @@ class BedrockProvider(AIProvider):
         self.embedding_model = (
             settings.bedrock_embedding_model_id or "amazon.titan-embed-text-v2:0"
         ).strip()
-        client_kwargs: dict[str, Any] = {"region_name": self.region}
+        client_kwargs: dict[str, Any] = {
+            "region_name": self.region,
+            "config": Config(
+                connect_timeout=10,
+                read_timeout=240,
+                retries={"max_attempts": 2, "mode": "standard"},
+            ),
+        }
         if settings.aws_access_key_id and settings.aws_secret_access_key:
             client_kwargs["aws_access_key_id"] = settings.aws_access_key_id.strip()
             client_kwargs["aws_secret_access_key"] = settings.aws_secret_access_key.strip()

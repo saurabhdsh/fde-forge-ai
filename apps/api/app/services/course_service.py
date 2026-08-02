@@ -313,8 +313,9 @@ class CourseService:
             enrich_raw, enrich_titles = await self.curriculum.build_enrichment_context(
                 organization_id, domain
             )
+            # Keep enrichment tiny — large context makes Bedrock course gen very slow
             enrich_safe = (
-                sanitize_for_prompt(enrich_raw, max_chars=40000) if enrich_raw else None
+                sanitize_for_prompt(enrich_raw, max_chars=3000) if enrich_raw else None
             )
             result = await self.ai.generate_structured(
                 prompt=build_user_prompt(
@@ -323,31 +324,31 @@ class CourseService:
                     other_domains=[d for d in required if d != domain],
                     enrichment_text=enrich_safe,
                     enrichment_sources=enrich_titles,
-                    selected_topics=selected_topics,
+                    selected_topics=selected_topics[:8],
                 ),
                 schema=GeneratedCoursePayload,
                 system=SYSTEM_PROMPT,
-                temperature=0.25,
-                max_output_tokens=8192,
+                temperature=0.2,
+                max_output_tokens=4096,
             )
             payload = GeneratedCoursePayload.model_validate(result.data)
             course.title = payload.title.strip() or course.title
             course.summary = payload.summary.strip()
-            course.learning_goals = list(payload.learning_goals or [])
+            course.learning_goals = list(payload.learning_goals or [])[:6]
             course.provider = result.provider
             course.model = result.model
             course.status = "ready"
             course.error_message = None
 
             module_count = 0
-            for mi, mod in enumerate(payload.modules[:7]):
-                slides = mod.slides[:10]
+            for mi, mod in enumerate(payload.modules[:4]):
+                slides = mod.slides[:5]
                 if not slides:
                     continue
                 cm = CourseModule(
                     course_id=course.id,
                     title=mod.title.strip(),
-                    objectives=list(mod.objectives or []),
+                    objectives=list(mod.objectives or [])[:4],
                     sort_order=mi,
                     status="ready",
                 )
@@ -357,11 +358,14 @@ class CourseService:
                     visual_type = slide.visual_type or "none"
                     if visual_type not in {"map", "diagram", "process", "timeline", "cards", "none"}:
                         visual_type = "none"
+                    body = (slide.body_markdown or "").strip()
+                    if len(body) > 1200:
+                        body = body[:1200].rstrip() + "…"
                     self.session.add(
                         CourseSlide(
                             module_id=cm.id,
-                            title=slide.title.strip(),
-                            body_markdown=slide.body_markdown.strip(),
+                            title=slide.title.strip()[:200],
+                            body_markdown=body,
                             visual_type=visual_type,
                             visual_payload=dict(slide.visual_payload or {}),
                             key_takeaway=(slide.key_takeaway or "").strip() or None,

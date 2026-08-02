@@ -87,8 +87,9 @@ export function CoursesPage() {
         </Typography>
         <Typography variant="h2">Domain courses</Typography>
         <Typography sx={{ color: cx.fgDim, maxWidth: 760 }}>
-          Pick topics for each domain, then generate one tailored super-course. Assessment unlocks
-          after every required domain course is completed.
+          Pick a few topics, then generate a compact course (3 modules × 4 slides). Usually
+          finishes in under a couple of minutes on Bedrock. Assessment unlocks after every
+          required domain course is completed.
         </Typography>
       </Stack>
 
