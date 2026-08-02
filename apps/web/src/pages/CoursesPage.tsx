@@ -66,7 +66,7 @@ export function CoursesPage() {
       const { data } = await api.post<ApiEnvelope<Course>>(
         `/courses/domains/${domain}/ensure`,
         { topic_ids, force: !!force },
-        { timeout: 120000, params: force ? { force: true } : undefined },
+        { timeout: 300000, params: force ? { force: true } : undefined },
       );
       return data.data;
     },
