@@ -3,7 +3,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PID_DIR="$ROOT/.run/pids"
+PID_DIR="${FDE_RUN_DIR:-$HOME/.fde-forge-ai}/pids"
 
 stop_pidfile() {
   local name="$1"
