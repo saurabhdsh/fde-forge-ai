@@ -25,6 +25,7 @@ stop_pidfile api
 stop_pidfile worker
 stop_pidfile web
 stop_pidfile minio
+stop_pidfile redis
 
 # Child processes from npm / uvicorn --reload / celery
 pkill -f "uvicorn app.main:app" 2>/dev/null || true
@@ -32,7 +33,5 @@ pkill -f "celery -A app.worker.celery_app" 2>/dev/null || true
 pkill -f "vite.*5173" 2>/dev/null || true
 
 echo "Native processes stopped."
-echo "Brew services (postgres/redis) left running. To stop them:"
-echo "  brew services stop postgresql@16"
-echo "  brew services stop redis"
+echo "Postgres/Redis brew services (if any) left running."
 echo "Docker users: docker compose down"

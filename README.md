@@ -16,7 +16,7 @@ chmod +x setup.sh scripts/stop.sh
 
 | Machine | What `setup.sh` does |
 |---------|----------------------|
-| **TCS Mac (no Docker)** | Homebrew Postgres + Redis + MinIO, Python/Node, migrate, seed, start API + Celery + web. **Bedrock only** (`~/.aws`). |
+| **TCS Mac (no Docker, no Homebrew)** | Uses company **npm/Node + Python + Postgres**. Redis/MinIO used if on PATH (else warn). Migrates, seeds, starts API + web. **Bedrock only** (`~/.aws`). |
 | **AWS EC2 (Docker)** | `docker compose up --build -d --scale worker=2` with Bedrock via instance IAM role. |
 
 Stop native Mac processes: `./scripts/stop.sh`  
