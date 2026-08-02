@@ -17,7 +17,9 @@
 #   FORCE_MODE=native|docker ./setup.sh
 #   WORKER_REPLICAS=4 ./setup.sh     # EC2 Celery scale (default 2)
 #   SKIP_START=1 ./setup.sh          # install deps only
-#   PGHOST / PGPORT / PGUSER         # override Postgres connection for role/db setup
+#   PSQL_PATH=/path/to/psql          # or directory containing psql (TCS Mac)
+#   PG_BIN=/Library/PostgreSQL/16/bin
+#   FDE_DB_HOST/PORT/USER/PASSWORD/NAME
 #   ./scripts/stop.sh                # stop native processes
 
 set -euo pipefail
@@ -51,6 +53,87 @@ HAS_BREW=0
 if have brew; then
   HAS_BREW=1
 fi
+
+# Resolve psql without Homebrew. Sets: PSQL, PG_BIN_DIR, and prepends PATH.
+resolve_psql() {
+  local candidate="" 
+
+  if [[ -n "${PSQL_PATH:-}" ]]; then
+    if [[ -x "$PSQL_PATH" && ! -d "$PSQL_PATH" ]]; then
+      candidate="$PSQL_PATH"
+    elif [[ -x "${PSQL_PATH%/}/psql" ]]; then
+      candidate="${PSQL_PATH%/}/psql"
+    fi
+  fi
+
+  if [[ -z "$candidate" && -n "${PG_BIN:-}" && -x "${PG_BIN%/}/psql" ]]; then
+    candidate="${PG_BIN%/}/psql"
+  fi
+
+  if [[ -z "$candidate" ]] && have psql; then
+    candidate="$(command -v psql)"
+  fi
+
+  if [[ -z "$candidate" ]]; then
+    local d
+    for d in \
+      /Library/PostgreSQL/17/bin \
+      /Library/PostgreSQL/16/bin \
+      /Library/PostgreSQL/15/bin \
+      /Library/PostgreSQL/14/bin \
+      /Applications/Postgres.app/Contents/Versions/latest/bin \
+      /Applications/Postgres.app/Contents/Versions/17/bin \
+      /Applications/Postgres.app/Contents/Versions/16/bin \
+      /Applications/Postgres.app/Contents/Versions/15/bin \
+      /opt/homebrew/opt/postgresql@16/bin \
+      /opt/homebrew/opt/postgresql@15/bin \
+      /opt/homebrew/opt/libpq/bin \
+      /usr/local/opt/postgresql@16/bin \
+      /usr/local/opt/libpq/bin \
+      /usr/local/pgsql/bin \
+      /opt/pgsql/bin \
+      /opt/postgresql/bin \
+      "$HOME/PostgreSQL/bin" \
+      "$HOME/.local/bin"; do
+      if [[ -x "$d/psql" ]]; then
+        candidate="$d/psql"
+        break
+      fi
+    done
+  fi
+
+  # Spotlight search (macOS) — slow fallback
+  if [[ -z "$candidate" ]] && have mdfind; then
+    candidate="$(mdfind 'kMDItemFSName == "psql" && kMDItemContentTypeTree == "public.unix-executable"' 2>/dev/null | head -1 || true)"
+    if [[ -n "$candidate" && ! -x "$candidate" ]]; then
+      candidate=""
+    fi
+  fi
+
+  if [[ -z "$candidate" ]]; then
+    warn "psql not found. On TCS Mac try:"
+    warn "  find /Library /Applications /opt /usr/local \"\$HOME\" -name psql -type f 2>/dev/null | head"
+    warn "Then re-run with:"
+    warn "  PSQL_PATH=/full/path/to/psql FORCE_MODE=native ./setup.sh"
+    warn "Or:  export PG_BIN=/Library/PostgreSQL/16/bin"
+    return 1
+  fi
+
+  PSQL="$candidate"
+  PG_BIN_DIR="$(cd "$(dirname "$PSQL")" && pwd)"
+  export PSQL PG_BIN_DIR
+  export PATH="$PG_BIN_DIR:$PATH"
+  ok "psql: $PSQL"
+  return 0
+}
+
+psql_cmd() {
+  if [[ -n "${PSQL:-}" && -x "$PSQL" ]]; then
+    "$PSQL" "$@"
+  else
+    psql "$@"
+  fi
+}
 
 detect_mode() {
   if [[ "${FORCE_MODE:-}" == "native" || "${FORCE_MODE:-}" == "docker" ]]; then
@@ -184,8 +267,8 @@ EOF
 }
 
 setup_postgres_native() {
-  have psql || die "psql not found. Postgres client tools required (no Homebrew). Ask IT or use company Postgres."
-  have createdb || warn "createdb not on PATH — will try CREATE DATABASE via psql"
+  resolve_psql || die "psql required. Set PSQL_PATH=/path/to/psql and re-run."
+  have createdb || warn "createdb not on PATH — will create DB via psql"
 
   # If brew Postgres exists, prefer it — but never required
   if (( HAS_BREW == 1 )); then
@@ -193,6 +276,7 @@ setup_postgres_native() {
     pg_prefix="$(brew --prefix postgresql@16 2>/dev/null || brew --prefix postgresql 2>/dev/null || true)"
     if [[ -n "${pg_prefix:-}" && -d "$pg_prefix/bin" ]]; then
       export PATH="$pg_prefix/bin:$PATH"
+      resolve_psql || true
     fi
     if brew services list 2>/dev/null | grep -Eq "postgresql(@[0-9]+)?.*started"; then
       ok "Postgres brew service already running"
@@ -207,13 +291,11 @@ setup_postgres_native() {
   local db_host="${FDE_DB_HOST:-127.0.0.1}"
   local db_port="${FDE_DB_PORT:-5432}"
 
-  # Probe: either local socket as current OS user, or TCP with admin
   log "Ensuring Postgres role/db (${db_user}@${db_host}:${db_port}/${db_name})..."
 
-  if ! PGPASSWORD="$db_pass" psql -h "$db_host" -p "$db_port" -U "$db_user" -d "$db_name" -c 'SELECT 1' >/dev/null 2>&1; then
-    # Try as current user / postgres superuser without password (common on Mac company images)
-    if psql -h "$db_host" -p "$db_port" -d postgres -tAc "SELECT 1" >/dev/null 2>&1; then
-      psql -h "$db_host" -p "$db_port" -d postgres -v ON_ERROR_STOP=1 <<SQL || true
+  if ! PGPASSWORD="$db_pass" psql_cmd -h "$db_host" -p "$db_port" -U "$db_user" -d "$db_name" -c 'SELECT 1' >/dev/null 2>&1; then
+    if psql_cmd -h "$db_host" -p "$db_port" -d postgres -tAc "SELECT 1" >/dev/null 2>&1; then
+      psql_cmd -h "$db_host" -p "$db_port" -d postgres -v ON_ERROR_STOP=1 <<SQL || true
 DO \$\$
 BEGIN
   IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '${db_user}') THEN
@@ -226,8 +308,8 @@ END
 SELECT 'CREATE DATABASE ${db_name} OWNER ${db_user}'
 WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = '${db_name}')\gexec
 SQL
-    elif psql -d postgres -tAc "SELECT 1" >/dev/null 2>&1; then
-      psql -d postgres -v ON_ERROR_STOP=1 <<SQL || true
+    elif psql_cmd -d postgres -tAc "SELECT 1" >/dev/null 2>&1; then
+      psql_cmd -d postgres -v ON_ERROR_STOP=1 <<SQL || true
 DO \$\$
 BEGIN
   IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '${db_user}') THEN
@@ -245,10 +327,10 @@ SQL
     fi
   fi
 
-  PGPASSWORD="$db_pass" psql -h "$db_host" -p "$db_port" -U "$db_user" -d "$db_name" -c 'CREATE EXTENSION IF NOT EXISTS "uuid-ossp";' >/dev/null
-  PGPASSWORD="$db_pass" psql -h "$db_host" -p "$db_port" -U "$db_user" -d "$db_name" -c 'CREATE EXTENSION IF NOT EXISTS vector;' >/dev/null 2>&1 \
+  PGPASSWORD="$db_pass" psql_cmd -h "$db_host" -p "$db_port" -U "$db_user" -d "$db_name" -c 'CREATE EXTENSION IF NOT EXISTS "uuid-ossp";' >/dev/null
+  PGPASSWORD="$db_pass" psql_cmd -h "$db_host" -p "$db_port" -U "$db_user" -d "$db_name" -c 'CREATE EXTENSION IF NOT EXISTS vector;' >/dev/null 2>&1 \
     || warn "vector extension failed — install pgvector for your Postgres if RAG features need it"
-  PGPASSWORD="$db_pass" psql -h "$db_host" -p "$db_port" -U "$db_user" -d "$db_name" -c 'CREATE EXTENSION IF NOT EXISTS pg_trgm;' >/dev/null
+  PGPASSWORD="$db_pass" psql_cmd -h "$db_host" -p "$db_port" -U "$db_user" -d "$db_name" -c 'CREATE EXTENSION IF NOT EXISTS pg_trgm;' >/dev/null
   ok "Postgres ready (${db_name} @ ${db_host}:${db_port})"
 }
 
@@ -451,7 +533,7 @@ run_native() {
 
   have node && have npm || die "Need both node and npm on PATH"
   have python3 || have python3.12 || die "Need python3 on PATH"
-  have psql || die "Need psql on PATH (company Postgres)"
+  resolve_psql || die "Need psql. Run with PSQL_PATH=/path/to/psql FORCE_MODE=native ./setup.sh"
 
   write_native_env
   setup_postgres_native
