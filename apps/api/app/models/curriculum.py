@@ -5,7 +5,7 @@ from __future__ import annotations
 from uuid import UUID
 
 from sqlalchemy import Boolean, ForeignKey, Integer, String, Text
-from sqlalchemy.dialects.postgresql import UUID as PGUUID
+from app.db.types import GUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
@@ -18,13 +18,13 @@ class CourseEnrichmentDocument(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     __tablename__ = "course_enrichment_documents"
 
     organization_id: Mapped[UUID] = mapped_column(
-        PGUUID(as_uuid=True),
+        GUID,
         ForeignKey("organizations.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
     uploaded_by_user_id: Mapped[UUID] = mapped_column(
-        PGUUID(as_uuid=True),
+        GUID,
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
         index=True,

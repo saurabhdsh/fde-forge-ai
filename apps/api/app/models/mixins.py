@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 from sqlalchemy import DateTime, ForeignKey, func
-from sqlalchemy.dialects.postgresql import UUID as PGUUID
+from app.db.types import GUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 
@@ -14,7 +14,7 @@ def utcnow() -> datetime:
 
 class UUIDPrimaryKeyMixin:
     id: Mapped[UUID] = mapped_column(
-        PGUUID(as_uuid=True),
+        GUID,
         primary_key=True,
         default=uuid4,
     )
@@ -36,12 +36,12 @@ class TimestampMixin:
 
 class AuditUserMixin:
     created_by: Mapped[UUID | None] = mapped_column(
-        PGUUID(as_uuid=True),
+        GUID,
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
     )
     updated_by: Mapped[UUID | None] = mapped_column(
-        PGUUID(as_uuid=True),
+        GUID,
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
     )
@@ -49,7 +49,7 @@ class AuditUserMixin:
 
 class OrganizationOwnedMixin:
     organization_id: Mapped[UUID] = mapped_column(
-        PGUUID(as_uuid=True),
+        GUID,
         ForeignKey("organizations.id", ondelete="CASCADE"),
         nullable=False,
         index=True,

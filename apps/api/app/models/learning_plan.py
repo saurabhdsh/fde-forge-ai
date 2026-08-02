@@ -5,7 +5,7 @@ from __future__ import annotations
 from uuid import UUID
 
 from sqlalchemy import Float, ForeignKey, Integer, String, Text
-from sqlalchemy.dialects.postgresql import UUID as PGUUID
+from app.db.types import GUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -16,16 +16,16 @@ class LearningPlan(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     __tablename__ = "learning_plans"
 
     user_id: Mapped[UUID] = mapped_column(
-        PGUUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+        GUID, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
     )
     organization_id: Mapped[UUID] = mapped_column(
-        PGUUID(as_uuid=True),
+        GUID,
         ForeignKey("organizations.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
     source_assessment_id: Mapped[UUID | None] = mapped_column(
-        PGUUID(as_uuid=True),
+        GUID,
         ForeignKey("assessments.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
@@ -46,13 +46,13 @@ class LearningPlanItem(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     __tablename__ = "learning_plan_items"
 
     plan_id: Mapped[UUID] = mapped_column(
-        PGUUID(as_uuid=True),
+        GUID,
         ForeignKey("learning_plans.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
     skill_id: Mapped[UUID] = mapped_column(
-        PGUUID(as_uuid=True), ForeignKey("skills.id", ondelete="RESTRICT"), nullable=False, index=True
+        GUID, ForeignKey("skills.id", ondelete="RESTRICT"), nullable=False, index=True
     )
     priority: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     status: Mapped[str] = mapped_column(String(50), nullable=False, default="todo")

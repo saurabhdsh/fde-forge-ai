@@ -5,7 +5,7 @@ FDE Forge AI supports **OpenAI** and **AWS Bedrock** (Claude via Converse). Whic
 | Machine | Default | How |
 |---------|---------|-----|
 | **This Mac (dev)** | OpenAI | `BEDROCK_ENABLED=false`, `AI_DEFAULT_PROVIDER=openai`, set `OPENAI_API_KEY` |
-| **TCS Mac (Bedrock)** | Bedrock only | Run `./setup.sh` (native Homebrew). Requires working `~/.aws`. |
+| **TCS Mac (Bedrock)** | Bedrock only | Run `./setup.sh` — **SQLite + local uploads**, no Docker/Homebrew. Uses `~/.aws`. |
 | **AWS EC2 (Docker)** | Bedrock only | Run `./setup.sh` (detects Docker, scales workers). Use instance IAM role — no keys in `.env`. |
 
 ## One-command setup

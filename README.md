@@ -16,27 +16,18 @@ chmod +x setup.sh scripts/stop.sh
 
 | Machine | What `setup.sh` does |
 |---------|----------------------|
-| **TCS Mac (no Docker, no Homebrew)** | Uses company **npm/Node + Python + Postgres**. Redis/MinIO used if on PATH (else warn). Migrates, seeds, starts API + web. **Bedrock only** (`~/.aws`). |
+| **TCS Mac (no Docker)** | Like Knowledge Fabric: **SQLite** + local uploads + npm + Python venv + **Bedrock**. No Homebrew/Postgres/Redis/MinIO. |
 | **AWS EC2 (Docker)** | `docker compose up --build -d --scale worker=2` with Bedrock via instance IAM role. |
 
-Stop native Mac processes: `./scripts/stop.sh`  
+After native setup you also get:
+- `./start_all.sh` — start API + web
+- `./start_backend.sh` / `./start_frontend.sh`
+- `./scripts/stop.sh` — stop background processes
+
 Stop Docker: `docker compose down`
 
 Force a mode: `FORCE_MODE=native ./setup.sh` or `FORCE_MODE=docker ./setup.sh`  
-EC2 workers: `WORKER_REPLICAS=4 ./setup.sh`  
-
-If `psql` is not on PATH (common on locked TCS Macs):
-
-```bash
-# Find it
-find /Library /Applications /opt /usr/local "$HOME" -name psql -type f 2>/dev/null | head
-
-# Then run (example)
-PSQL_PATH=/Library/PostgreSQL/16/bin/psql FORCE_MODE=native ./setup.sh
-# or
-export PG_BIN=/Library/PostgreSQL/16/bin
-FORCE_MODE=native ./setup.sh
-```
+EC2 workers: `WORKER_REPLICAS=4 ./setup.sh`
 
 ### Manual Docker
 

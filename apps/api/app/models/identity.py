@@ -16,8 +16,7 @@ from sqlalchemy import (
     UniqueConstraint,
     func,
 )
-from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.dialects.postgresql import UUID as PGUUID
+from app.db.types import GUID, JSONType
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -33,7 +32,7 @@ class Organization(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     slug: Mapped[str] = mapped_column(String(100), unique=True, nullable=False, index=True)
     status: Mapped[str] = mapped_column(String(50), default="active", nullable=False)
-    branding: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    branding: Mapped[dict] = mapped_column(JSONType, default=dict, nullable=False)
     is_demo: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
     settings: Mapped[OrganizationSetting | None] = relationship(
@@ -46,17 +45,17 @@ class OrganizationSetting(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     __tablename__ = "organization_settings"
 
     organization_id: Mapped[UUID] = mapped_column(
-        PGUUID(as_uuid=True),
+        GUID,
         ForeignKey("organizations.id", ondelete="CASCADE"),
         unique=True,
         nullable=False,
     )
-    readiness_weights: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
-    content_policies: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
-    security_settings: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
-    ai_limits: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
-    certification_settings: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
-    feature_flags: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    readiness_weights: Mapped[dict] = mapped_column(JSONType, default=dict, nullable=False)
+    content_policies: Mapped[dict] = mapped_column(JSONType, default=dict, nullable=False)
+    security_settings: Mapped[dict] = mapped_column(JSONType, default=dict, nullable=False)
+    ai_limits: Mapped[dict] = mapped_column(JSONType, default=dict, nullable=False)
+    certification_settings: Mapped[dict] = mapped_column(JSONType, default=dict, nullable=False)
+    feature_flags: Mapped[dict] = mapped_column(JSONType, default=dict, nullable=False)
 
     organization: Mapped[Organization] = relationship(back_populates="settings")
 
@@ -69,7 +68,7 @@ class User(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     )
 
     organization_id: Mapped[UUID] = mapped_column(
-        PGUUID(as_uuid=True),
+        GUID,
         ForeignKey("organizations.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
@@ -107,13 +106,13 @@ class UserProfile(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     __tablename__ = "user_profiles"
 
     user_id: Mapped[UUID] = mapped_column(
-        PGUUID(as_uuid=True),
+        GUID,
         ForeignKey("users.id", ondelete="CASCADE"),
         unique=True,
         nullable=False,
     )
     organization_id: Mapped[UUID] = mapped_column(
-        PGUUID(as_uuid=True),
+        GUID,
         ForeignKey("organizations.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
@@ -124,7 +123,7 @@ class UserProfile(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     timezone: Mapped[str | None] = mapped_column(String(100), nullable=True)
     phone: Mapped[str | None] = mapped_column(String(50), nullable=True)
     bio: Mapped[str | None] = mapped_column(Text, nullable=True)
-    preferences: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    preferences: Mapped[dict] = mapped_column(JSONType, default=dict, nullable=False)
 
     user: Mapped[User] = relationship(back_populates="profile")
 
@@ -134,7 +133,7 @@ class Role(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     __table_args__ = (UniqueConstraint("organization_id", "code", name="uq_roles_org_code"),)
 
     organization_id: Mapped[UUID | None] = mapped_column(
-        PGUUID(as_uuid=True),
+        GUID,
         ForeignKey("organizations.id", ondelete="CASCADE"),
         nullable=True,
         index=True,
@@ -166,10 +165,10 @@ class RolePermission(Base, UUIDPrimaryKeyMixin):
     __table_args__ = (UniqueConstraint("role_id", "permission_id", name="uq_role_permission"),)
 
     role_id: Mapped[UUID] = mapped_column(
-        PGUUID(as_uuid=True), ForeignKey("roles.id", ondelete="CASCADE"), nullable=False
+        GUID, ForeignKey("roles.id", ondelete="CASCADE"), nullable=False
     )
     permission_id: Mapped[UUID] = mapped_column(
-        PGUUID(as_uuid=True), ForeignKey("permissions.id", ondelete="CASCADE"), nullable=False
+        GUID, ForeignKey("permissions.id", ondelete="CASCADE"), nullable=False
     )
 
     role: Mapped[Role] = relationship(back_populates="permissions")
@@ -181,13 +180,13 @@ class UserRole(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     __table_args__ = (UniqueConstraint("user_id", "role_id", name="uq_user_role"),)
 
     user_id: Mapped[UUID] = mapped_column(
-        PGUUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+        GUID, ForeignKey("users.id", ondelete="CASCADE"), nullable=False
     )
     role_id: Mapped[UUID] = mapped_column(
-        PGUUID(as_uuid=True), ForeignKey("roles.id", ondelete="CASCADE"), nullable=False
+        GUID, ForeignKey("roles.id", ondelete="CASCADE"), nullable=False
     )
     organization_id: Mapped[UUID] = mapped_column(
-        PGUUID(as_uuid=True),
+        GUID,
         ForeignKey("organizations.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
@@ -201,10 +200,10 @@ class Session(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     __tablename__ = "sessions"
 
     user_id: Mapped[UUID] = mapped_column(
-        PGUUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+        GUID, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
     )
     organization_id: Mapped[UUID] = mapped_column(
-        PGUUID(as_uuid=True),
+        GUID,
         ForeignKey("organizations.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
@@ -223,13 +222,13 @@ class RefreshToken(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     __tablename__ = "refresh_tokens"
 
     session_id: Mapped[UUID] = mapped_column(
-        PGUUID(as_uuid=True), ForeignKey("sessions.id", ondelete="CASCADE"), nullable=False, index=True
+        GUID, ForeignKey("sessions.id", ondelete="CASCADE"), nullable=False, index=True
     )
     user_id: Mapped[UUID] = mapped_column(
-        PGUUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+        GUID, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
     )
     organization_id: Mapped[UUID] = mapped_column(
-        PGUUID(as_uuid=True),
+        GUID,
         ForeignKey("organizations.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
@@ -238,7 +237,7 @@ class RefreshToken(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     replaced_by_token_id: Mapped[UUID | None] = mapped_column(
-        PGUUID(as_uuid=True), ForeignKey("refresh_tokens.id", ondelete="SET NULL"), nullable=True
+        GUID, ForeignKey("refresh_tokens.id", ondelete="SET NULL"), nullable=True
     )
 
 
@@ -247,7 +246,7 @@ class LoginAttempt(Base, UUIDPrimaryKeyMixin):
 
     email: Mapped[str] = mapped_column(String(320), nullable=False, index=True)
     organization_id: Mapped[UUID | None] = mapped_column(
-        PGUUID(as_uuid=True), ForeignKey("organizations.id", ondelete="SET NULL"), nullable=True
+        GUID, ForeignKey("organizations.id", ondelete="SET NULL"), nullable=True
     )
     success: Mapped[bool] = mapped_column(Boolean, nullable=False)
     ip_address: Mapped[str | None] = mapped_column(String(64), nullable=True)

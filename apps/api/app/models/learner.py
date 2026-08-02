@@ -7,8 +7,7 @@ from typing import TYPE_CHECKING
 from uuid import UUID
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text
-from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.dialects.postgresql import UUID as PGUUID
+from app.db.types import GUID, JSONType
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -22,13 +21,13 @@ class LearnerProfile(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     __tablename__ = "learner_profiles"
 
     user_id: Mapped[UUID] = mapped_column(
-        PGUUID(as_uuid=True),
+        GUID,
         ForeignKey("users.id", ondelete="CASCADE"),
         unique=True,
         nullable=False,
     )
     organization_id: Mapped[UUID] = mapped_column(
-        PGUUID(as_uuid=True),
+        GUID,
         ForeignKey("organizations.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
@@ -37,13 +36,13 @@ class LearnerProfile(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         String(50), nullable=False, default="invited"
     )
     target_fde_role: Mapped[str | None] = mapped_column(String(200), nullable=True)
-    career_interests: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
-    domain_preferences: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
-    course_topic_preferences: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
-    technical_experience: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
-    project_experience: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
-    domain_experience: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
-    existing_certifications: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    career_interests: Mapped[list] = mapped_column(JSONType, default=list, nullable=False)
+    domain_preferences: Mapped[list] = mapped_column(JSONType, default=list, nullable=False)
+    course_topic_preferences: Mapped[dict] = mapped_column(JSONType, default=dict, nullable=False)
+    technical_experience: Mapped[dict] = mapped_column(JSONType, default=dict, nullable=False)
+    project_experience: Mapped[list] = mapped_column(JSONType, default=list, nullable=False)
+    domain_experience: Mapped[dict] = mapped_column(JSONType, default=dict, nullable=False)
+    existing_certifications: Mapped[list] = mapped_column(JSONType, default=list, nullable=False)
     years_of_experience: Mapped[int | None] = mapped_column(Integer, nullable=True)
     available_weekly_hours: Mapped[int | None] = mapped_column(Integer, nullable=True)
     target_completion_date: Mapped[datetime | None] = mapped_column(
@@ -72,16 +71,16 @@ class ResumeDocument(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     __tablename__ = "resume_documents"
 
     learner_profile_id: Mapped[UUID] = mapped_column(
-        PGUUID(as_uuid=True),
+        GUID,
         ForeignKey("learner_profiles.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
     user_id: Mapped[UUID] = mapped_column(
-        PGUUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+        GUID, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
     )
     organization_id: Mapped[UUID] = mapped_column(
-        PGUUID(as_uuid=True),
+        GUID,
         ForeignKey("organizations.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
@@ -110,16 +109,16 @@ class AIExtractionRecord(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     __tablename__ = "ai_extraction_records"
 
     resume_document_id: Mapped[UUID] = mapped_column(
-        PGUUID(as_uuid=True),
+        GUID,
         ForeignKey("resume_documents.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
     user_id: Mapped[UUID] = mapped_column(
-        PGUUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+        GUID, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
     )
     organization_id: Mapped[UUID] = mapped_column(
-        PGUUID(as_uuid=True),
+        GUID,
         ForeignKey("organizations.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
@@ -128,10 +127,10 @@ class AIExtractionRecord(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     model: Mapped[str] = mapped_column(String(100), nullable=False)
     prompt_version: Mapped[str] = mapped_column(String(50), nullable=False)
     status: Mapped[str] = mapped_column(String(50), nullable=False, default="pending")
-    raw_response: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
-    validated_payload: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
-    edited_payload: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
-    confirmed_payload: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    raw_response: Mapped[dict | None] = mapped_column(JSONType, nullable=True)
+    validated_payload: Mapped[dict | None] = mapped_column(JSONType, nullable=True)
+    edited_payload: Mapped[dict | None] = mapped_column(JSONType, nullable=True)
+    confirmed_payload: Mapped[dict | None] = mapped_column(JSONType, nullable=True)
     input_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     output_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     estimated_cost_usd: Mapped[float | None] = mapped_column(nullable=True)

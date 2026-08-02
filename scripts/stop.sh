@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Stop native (non-Docker) FDE Forge AI processes started by setup.sh
+# Stop native (non-Docker) FDE Forge AI processes
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -27,11 +27,9 @@ stop_pidfile web
 stop_pidfile minio
 stop_pidfile redis
 
-# Child processes from npm / uvicorn --reload / celery
 pkill -f "uvicorn app.main:app" 2>/dev/null || true
 pkill -f "celery -A app.worker.celery_app" 2>/dev/null || true
 pkill -f "vite.*5173" 2>/dev/null || true
 
 echo "Native processes stopped."
-echo "Postgres/Redis brew services (if any) left running."
 echo "Docker users: docker compose down"

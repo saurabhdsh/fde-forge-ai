@@ -9,7 +9,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=(".env", "../.env", "../../.env"),
         env_file_encoding="utf-8",
         extra="ignore",
         case_sensitive=False,
@@ -36,6 +36,16 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379/0"
     celery_broker_url: str = "redis://localhost:6379/0"
     celery_result_backend: str = "redis://localhost:6379/1"
+
+    # local = filesystem (TCS Mac SQLite mode); s3 = MinIO/S3 (Docker/EC2)
+    storage_backend: str = Field(
+        default="s3",
+        validation_alias=AliasChoices("STORAGE_BACKEND", "storage_backend"),
+    )
+    local_storage_path: str = Field(
+        default=".run/uploads",
+        validation_alias=AliasChoices("LOCAL_STORAGE_PATH", "local_storage_path"),
+    )
 
     s3_endpoint: str = "http://localhost:9000"
     s3_public_endpoint: str = "http://localhost:9000"
@@ -185,6 +195,15 @@ class Settings(BaseSettings):
     @property
     def tavus_configured(self) -> bool:
         return bool(self.tavus_api_key and self.tavus_api_key.strip())
+
+    @property
+    def is_sqlite(self) -> bool:
+        url = (self.database_url or "").lower()
+        return url.startswith("sqlite:") or "+aiosqlite" in url or url.startswith("sqlite+")
+
+    @property
+    def use_local_storage(self) -> bool:
+        return (self.storage_backend or "s3").strip().lower() in {"local", "filesystem", "fs"}
 
     @property
     def is_development(self) -> bool:

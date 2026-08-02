@@ -2,6 +2,9 @@
 .env.native
 .run/
 .venv/
+start_backend.sh
+start_frontend.sh
+start_all.sh
 venv/
 __pycache__/
 *.py[cod]

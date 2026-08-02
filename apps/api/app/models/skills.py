@@ -15,8 +15,7 @@ from sqlalchemy import (
     UniqueConstraint,
     func,
 )
-from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.dialects.postgresql import UUID as PGUUID
+from app.db.types import GUID, JSONType
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -43,24 +42,24 @@ class Skill(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     pillar_id: Mapped[UUID] = mapped_column(
-        PGUUID(as_uuid=True),
+        GUID,
         ForeignKey("competency_pillars.id", ondelete="RESTRICT"),
         nullable=False,
         index=True,
     )
     parent_skill_id: Mapped[UUID | None] = mapped_column(
-        PGUUID(as_uuid=True), ForeignKey("skills.id", ondelete="SET NULL"), nullable=True
+        GUID, ForeignKey("skills.id", ondelete="SET NULL"), nullable=True
     )
     category: Mapped[str] = mapped_column(String(100), nullable=False, default="general")
     domain: Mapped[str] = mapped_column(String(100), nullable=False, default="general")
     difficulty: Mapped[str] = mapped_column(String(50), nullable=False, default="foundational")
-    evidence_requirements: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
-    assessment_mappings: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
-    learning_content_mappings: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    evidence_requirements: Mapped[dict] = mapped_column(JSONType, default=dict, nullable=False)
+    assessment_mappings: Mapped[dict] = mapped_column(JSONType, default=dict, nullable=False)
+    learning_content_mappings: Mapped[dict] = mapped_column(JSONType, default=dict, nullable=False)
     version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     organization_id: Mapped[UUID | None] = mapped_column(
-        PGUUID(as_uuid=True),
+        GUID,
         ForeignKey("organizations.id", ondelete="CASCADE"),
         nullable=True,
         index=True,
@@ -86,16 +85,16 @@ class LearnerSkill(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     )
 
     user_id: Mapped[UUID] = mapped_column(
-        PGUUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+        GUID, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
     )
     organization_id: Mapped[UUID] = mapped_column(
-        PGUUID(as_uuid=True),
+        GUID,
         ForeignKey("organizations.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
     skill_id: Mapped[UUID] = mapped_column(
-        PGUUID(as_uuid=True), ForeignKey("skills.id", ondelete="CASCADE"), nullable=False, index=True
+        GUID, ForeignKey("skills.id", ondelete="CASCADE"), nullable=False, index=True
     )
     proficiency_level: Mapped[str] = mapped_column(
         String(50), nullable=False, default="not_assessed"
@@ -117,13 +116,13 @@ class SkillEvidence(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     __tablename__ = "skill_evidence"
 
     learner_skill_id: Mapped[UUID] = mapped_column(
-        PGUUID(as_uuid=True),
+        GUID,
         ForeignKey("learner_skills.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
     organization_id: Mapped[UUID] = mapped_column(
-        PGUUID(as_uuid=True),
+        GUID,
         ForeignKey("organizations.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
@@ -132,7 +131,7 @@ class SkillEvidence(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     source_entity_type: Mapped[str | None] = mapped_column(String(100), nullable=True)
     source_entity_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
     summary: Mapped[str | None] = mapped_column(Text, nullable=True)
-    metadata_: Mapped[dict] = mapped_column("metadata", JSONB, default=dict, nullable=False)
+    metadata_: Mapped[dict] = mapped_column("metadata", JSONType, default=dict, nullable=False)
     recorded_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

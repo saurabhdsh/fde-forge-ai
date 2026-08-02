@@ -1,8 +1,9 @@
-"""S3-compatible object storage service (MinIO)."""
+"""Object storage: MinIO/S3 (Docker/EC2) or local filesystem (TCS Mac)."""
 
 from __future__ import annotations
 
 import hashlib
+from pathlib import Path
 from typing import BinaryIO
 from uuid import uuid4
 
@@ -23,7 +24,18 @@ class StorageService:
         self._client = None
 
     @property
+    def _local_root(self) -> Path:
+        root = Path(self.settings.local_storage_path)
+        if not root.is_absolute():
+            # Resolve relative to API package parent (repo apps/api → repo root .run)
+            root = Path.cwd() / root
+        root.mkdir(parents=True, exist_ok=True)
+        return root
+
+    @property
     def client(self):
+        if self.settings.use_local_storage:
+            raise ConfigurationError("Local storage mode does not use an S3 client")
         if self._client is None:
             try:
                 self._client = boto3.client(
@@ -43,6 +55,9 @@ class StorageService:
         return self._client
 
     def ensure_bucket(self) -> None:
+        if self.settings.use_local_storage:
+            self._local_root.mkdir(parents=True, exist_ok=True)
+            return
         try:
             self.client.head_bucket(Bucket=self.settings.s3_bucket)
         except ClientError:
@@ -69,6 +84,15 @@ class StorageService:
         self.ensure_bucket()
         checksum = hashlib.sha256(data).hexdigest()
         key = f"{organization_id}/{folder}/{uuid4()}/{filename}"
+
+        if self.settings.use_local_storage:
+            path = self._local_root / key
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(data)
+            # Persist content-type alongside file for debugging
+            path.with_suffix(path.suffix + ".ctype").write_text(content_type, encoding="utf-8")
+            return "local", key, checksum
+
         try:
             self.client.put_object(
                 Bucket=self.settings.s3_bucket,
@@ -87,6 +111,19 @@ class StorageService:
         return self.settings.s3_bucket, key, checksum
 
     def delete_object(self, *, bucket: str, key: str) -> None:
+        if self.settings.use_local_storage or bucket == "local":
+            path = self._local_root / key
+            try:
+                path.unlink(missing_ok=True)
+                path.with_suffix(path.suffix + ".ctype").unlink(missing_ok=True)
+            except OSError as exc:
+                logger.warning("local_storage_delete_failed", error=str(exc), key=key)
+                raise AppError(
+                    "Failed to delete file from storage",
+                    code="storage_error",
+                    status_code=503,
+                ) from exc
+            return
         try:
             self.client.delete_object(Bucket=bucket, Key=key)
         except (ClientError, BotoCoreError) as exc:
@@ -98,6 +135,16 @@ class StorageService:
             ) from exc
 
     def download_bytes(self, *, bucket: str, key: str) -> bytes:
+        if self.settings.use_local_storage or bucket == "local":
+            path = self._local_root / key
+            try:
+                return path.read_bytes()
+            except OSError as exc:
+                raise AppError(
+                    "Failed to retrieve file from storage",
+                    code="storage_error",
+                    status_code=503,
+                ) from exc
         try:
             response = self.client.get_object(Bucket=bucket, Key=key)
             return response["Body"].read()

@@ -6,8 +6,7 @@ from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text
-from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.dialects.postgresql import UUID as PGUUID
+from app.db.types import GUID, JSONType
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -18,10 +17,10 @@ class Assessment(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     __tablename__ = "assessments"
 
     user_id: Mapped[UUID] = mapped_column(
-        PGUUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+        GUID, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
     )
     organization_id: Mapped[UUID] = mapped_column(
-        PGUUID(as_uuid=True),
+        GUID,
         ForeignKey("organizations.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
@@ -37,7 +36,7 @@ class Assessment(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
-    draft_payload: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    draft_payload: Mapped[dict] = mapped_column(JSONType, nullable=False, default=dict)
 
     questions: Mapped[list[AssessmentQuestion]] = relationship(
         back_populates="assessment",
@@ -53,16 +52,16 @@ class AssessmentQuestion(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     __tablename__ = "assessment_questions"
 
     assessment_id: Mapped[UUID] = mapped_column(
-        PGUUID(as_uuid=True),
+        GUID,
         ForeignKey("assessments.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
     skill_id: Mapped[UUID] = mapped_column(
-        PGUUID(as_uuid=True), ForeignKey("skills.id", ondelete="RESTRICT"), nullable=False, index=True
+        GUID, ForeignKey("skills.id", ondelete="RESTRICT"), nullable=False, index=True
     )
     stem: Mapped[str] = mapped_column(Text, nullable=False)
-    choices: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    choices: Mapped[list] = mapped_column(JSONType, nullable=False, default=list)
     correct_index: Mapped[int] = mapped_column(Integer, nullable=False)
     explanation: Mapped[str | None] = mapped_column(Text, nullable=True)
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
@@ -75,13 +74,13 @@ class AssessmentAnswer(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     __tablename__ = "assessment_answers"
 
     assessment_id: Mapped[UUID] = mapped_column(
-        PGUUID(as_uuid=True),
+        GUID,
         ForeignKey("assessments.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
     question_id: Mapped[UUID] = mapped_column(
-        PGUUID(as_uuid=True),
+        GUID,
         ForeignKey("assessment_questions.id", ondelete="CASCADE"),
         nullable=False,
         index=True,

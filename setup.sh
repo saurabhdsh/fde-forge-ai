@@ -1,26 +1,19 @@
 #!/usr/bin/env bash
-# FDE Forge AI — one-command setup + start
+# FDE Forge AI — setup without Docker (TCS Mac / Bedrock + SQLite)
+# Inspired by Knowledge Fabric setup_without_docker.sh
 #
-# TCS Mac (no Docker, no Homebrew required):
-#   Uses already-installed npm/Node, Python, and Postgres.
-#   Redis/MinIO: use if on PATH; otherwise warn and continue.
-#   AI: Bedrock via existing ~/.aws
+# TCS Mac (default when no Docker):
+#   Python venv + npm + SQLite file DB + local uploads + Bedrock (~/.aws)
+#   No Homebrew, Postgres, Redis, MinIO, or Docker required.
 #
-# AWS EC2 (Docker):
-#   docker compose up --build -d --scale worker=N
+# AWS EC2 (when Docker is available):
+#   docker compose up --build -d --scale worker=2
 #
-# Usage (from repo root fde-forge-ai/):
+# Usage:
 #   chmod +x setup.sh scripts/stop.sh
+#   ./setup.sh
 #   FORCE_MODE=native ./setup.sh
-#
-# Optional:
-#   FORCE_MODE=native|docker ./setup.sh
-#   WORKER_REPLICAS=4 ./setup.sh     # EC2 Celery scale (default 2)
-#   SKIP_START=1 ./setup.sh          # install deps only
-#   PSQL_PATH=/path/to/psql          # or directory containing psql (TCS Mac)
-#   PG_BIN=/Library/PostgreSQL/16/bin
-#   FDE_DB_HOST/PORT/USER/PASSWORD/NAME
-#   ./scripts/stop.sh                # stop native processes
+#   FORCE_MODE=docker ./setup.sh
 
 set -euo pipefail
 
@@ -30,179 +23,89 @@ cd "$ROOT"
 RUN_DIR="$ROOT/.run"
 LOG_DIR="$RUN_DIR/logs"
 PID_DIR="$RUN_DIR/pids"
-BIN_DIR="$RUN_DIR/bin"
-NATIVE_ENV="$ROOT/.env.native"
+DB_FILE="$RUN_DIR/fde_forge.db"
+UPLOAD_DIR="$RUN_DIR/uploads"
 COMPOSE_ENV="$ROOT/.env"
 
-mkdir -p "$LOG_DIR" "$PID_DIR" "$BIN_DIR"
+mkdir -p "$LOG_DIR" "$PID_DIR" "$UPLOAD_DIR"
 
-BLUE='\033[0;34m'
+RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
-RED='\033[0;31m'
+BLUE='\033[0;34m'
 NC='\033[0m'
 
-log()  { echo -e "${BLUE}==>${NC} $*"; }
-ok()   { echo -e "${GREEN}✔${NC} $*"; }
-warn() { echo -e "${YELLOW}!${NC} $*"; }
-die()  { echo -e "${RED}✖${NC} $*"; exit 1; }
+print_status()  { echo -e "${BLUE}[INFO]${NC} $1"; }
+print_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
+print_warning() { echo -e "${YELLOW}[WARNING]${NC} $1"; }
+print_error()   { echo -e "${RED}[ERROR]${NC} $1"; }
 
-have() { command -v "$1" >/dev/null 2>&1; }
+command_exists() { command -v "$1" >/dev/null 2>&1; }
 
-HAS_BREW=0
-if have brew; then
-  HAS_BREW=1
-fi
-
-# Resolve psql without Homebrew. Sets: PSQL, PG_BIN_DIR, and prepends PATH.
-resolve_psql() {
-  local candidate="" 
-
-  if [[ -n "${PSQL_PATH:-}" ]]; then
-    if [[ -x "$PSQL_PATH" && ! -d "$PSQL_PATH" ]]; then
-      candidate="$PSQL_PATH"
-    elif [[ -x "${PSQL_PATH%/}/psql" ]]; then
-      candidate="${PSQL_PATH%/}/psql"
-    fi
-  fi
-
-  if [[ -z "$candidate" && -n "${PG_BIN:-}" && -x "${PG_BIN%/}/psql" ]]; then
-    candidate="${PG_BIN%/}/psql"
-  fi
-
-  if [[ -z "$candidate" ]] && have psql; then
-    candidate="$(command -v psql)"
-  fi
-
-  if [[ -z "$candidate" ]]; then
-    local d
-    for d in \
-      /Library/PostgreSQL/17/bin \
-      /Library/PostgreSQL/16/bin \
-      /Library/PostgreSQL/15/bin \
-      /Library/PostgreSQL/14/bin \
-      /Applications/Postgres.app/Contents/Versions/latest/bin \
-      /Applications/Postgres.app/Contents/Versions/17/bin \
-      /Applications/Postgres.app/Contents/Versions/16/bin \
-      /Applications/Postgres.app/Contents/Versions/15/bin \
-      /opt/homebrew/opt/postgresql@16/bin \
-      /opt/homebrew/opt/postgresql@15/bin \
-      /opt/homebrew/opt/libpq/bin \
-      /usr/local/opt/postgresql@16/bin \
-      /usr/local/opt/libpq/bin \
-      /usr/local/pgsql/bin \
-      /opt/pgsql/bin \
-      /opt/postgresql/bin \
-      "$HOME/PostgreSQL/bin" \
-      "$HOME/.local/bin"; do
-      if [[ -x "$d/psql" ]]; then
-        candidate="$d/psql"
-        break
-      fi
-    done
-  fi
-
-  # Spotlight search (macOS) — slow fallback
-  if [[ -z "$candidate" ]] && have mdfind; then
-    candidate="$(mdfind 'kMDItemFSName == "psql" && kMDItemContentTypeTree == "public.unix-executable"' 2>/dev/null | head -1 || true)"
-    if [[ -n "$candidate" && ! -x "$candidate" ]]; then
-      candidate=""
-    fi
-  fi
-
-  if [[ -z "$candidate" ]]; then
-    warn "psql not found. On TCS Mac try:"
-    warn "  find /Library /Applications /opt /usr/local \"\$HOME\" -name psql -type f 2>/dev/null | head"
-    warn "Then re-run with:"
-    warn "  PSQL_PATH=/full/path/to/psql FORCE_MODE=native ./setup.sh"
-    warn "Or:  export PG_BIN=/Library/PostgreSQL/16/bin"
-    return 1
-  fi
-
-  PSQL="$candidate"
-  PG_BIN_DIR="$(cd "$(dirname "$PSQL")" && pwd)"
-  export PSQL PG_BIN_DIR
-  export PATH="$PG_BIN_DIR:$PATH"
-  ok "psql: $PSQL"
-  return 0
-}
-
-psql_cmd() {
-  if [[ -n "${PSQL:-}" && -x "$PSQL" ]]; then
-    "$PSQL" "$@"
-  else
-    psql "$@"
-  fi
-}
+die() { print_error "$1"; exit 1; }
 
 detect_mode() {
   if [[ "${FORCE_MODE:-}" == "native" || "${FORCE_MODE:-}" == "docker" ]]; then
     echo "$FORCE_MODE"
     return
   fi
-  if have docker && docker info >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
+  if command_exists docker && docker info >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
     echo "docker"
   else
     echo "native"
   fi
 }
 
+select_python_command() {
+  if [[ -n "${PYTHON_BIN:-}" ]] && command_exists "${PYTHON_BIN}"; then
+    echo "${PYTHON_BIN}"
+    return
+  fi
+  local candidate version
+  for candidate in python3.12 python3.11 python3; do
+    if command_exists "$candidate"; then
+      version="$("$candidate" -c 'import sys; print(f"{sys.version_info[0]}.{sys.version_info[1]}")' 2>/dev/null || true)"
+      case "$version" in
+        3.12|3.13|3.11) echo "$candidate"; return ;;
+      esac
+    fi
+  done
+  echo ""
+}
+
 wait_http() {
-  local url="$1" name="$2" tries="${3:-60}"
-  local i=0
+  local url="$1" name="$2" tries="${3:-60}" i=0
   while (( i < tries )); do
     if curl -sf "$url" >/dev/null 2>&1; then
-      ok "$name is up ($url)"
+      print_success "$name is up ($url)"
       return 0
     fi
     sleep 1
     ((i++)) || true
   done
-  warn "$name not responding yet at $url (check $LOG_DIR)"
+  print_warning "$name not responding yet at $url — check $LOG_DIR"
   return 1
 }
 
-optional_brew_install() {
-  local pkg="$1"
-  if (( HAS_BREW == 0 )); then
-    return 1
-  fi
-  if brew list --versions "$pkg" >/dev/null 2>&1 || brew list --cask --versions "$pkg" >/dev/null 2>&1; then
-    ok "$pkg already installed (brew)"
-    return 0
-  fi
-  log "Installing $pkg via Homebrew (optional)..."
-  brew install "$pkg"
-}
-
-write_native_env() {
-  # Keep existing native .env so secret keys don't rotate on every re-run
-  if [[ -f "$COMPOSE_ENV" ]] && grep -q '127.0.0.1:5432/fde_forge' "$COMPOSE_ENV" 2>/dev/null \
+write_sqlite_env() {
+  print_status "Writing .env for TCS Mac (SQLite + local storage + Bedrock)..."
+  local secret csrf
+  if [[ -f "$COMPOSE_ENV" ]] && grep -q 'sqlite' "$COMPOSE_ENV" 2>/dev/null \
     && grep -q '^BEDROCK_ENABLED=true' "$COMPOSE_ENV" 2>/dev/null; then
-    ok "Using existing .env (native + Bedrock)"
+    print_success "Using existing SQLite .env"
     return
   fi
 
-  log "Writing native .env (localhost services + Bedrock only)..."
-  local secret csrf existing_openai=""
   if [[ -f "$COMPOSE_ENV" ]]; then
     secret="$(grep -E '^SECRET_KEY=' "$COMPOSE_ENV" 2>/dev/null | head -1 | cut -d= -f2- || true)"
     csrf="$(grep -E '^CSRF_SECRET=' "$COMPOSE_ENV" 2>/dev/null | head -1 | cut -d= -f2- || true)"
-    existing_openai="$(grep -E '^OPENAI_API_KEY=' "$COMPOSE_ENV" 2>/dev/null | head -1 | cut -d= -f2- || true)"
   fi
   [[ -n "${secret:-}" ]] || secret="$(openssl rand -hex 32 2>/dev/null || python3 -c 'import secrets; print(secrets.token_hex(32))')"
   [[ -n "${csrf:-}" ]] || csrf="$(openssl rand -hex 32 2>/dev/null || python3 -c 'import secrets; print(secrets.token_hex(32))')"
 
-  # Allow company Postgres credentials via env overrides
-  local db_user="${FDE_DB_USER:-fde}"
-  local db_pass="${FDE_DB_PASSWORD:-fde_secret}"
-  local db_name="${FDE_DB_NAME:-fde_forge}"
-  local db_host="${FDE_DB_HOST:-127.0.0.1}"
-  local db_port="${FDE_DB_PORT:-5432}"
-
-  cat > "$NATIVE_ENV" <<EOF
-# Auto-generated by setup.sh for TCS Mac (native / no Docker / no Homebrew required)
-# AI: Bedrock only — uses ~/.aws (already configured on TCS)
+  # Absolute sqlite paths so alembic/uvicorn cwd does not matter
+  cat > "$COMPOSE_ENV" <<EOF
+# Auto-generated by setup.sh — TCS Mac native (SQLite, no Docker)
 APP_ENV=development
 APP_NAME=FDE Forge AI
 APP_TAGLINE=Transform AI Engineers into Customer-Ready Forward Deployed Engineers.
@@ -217,12 +120,15 @@ CORS_ORIGINS=http://localhost:5173,http://localhost:3000
 COOKIE_SECURE=false
 COOKIE_SAMESITE=lax
 
-DATABASE_URL=postgresql+asyncpg://${db_user}:${db_pass}@${db_host}:${db_port}/${db_name}
-DATABASE_URL_SYNC=postgresql://${db_user}:${db_pass}@${db_host}:${db_port}/${db_name}
+DATABASE_URL=sqlite+aiosqlite:///${DB_FILE}
+DATABASE_URL_SYNC=sqlite:///${DB_FILE}
 
 REDIS_URL=redis://127.0.0.1:6379/0
 CELERY_BROKER_URL=redis://127.0.0.1:6379/0
 CELERY_RESULT_BACKEND=redis://127.0.0.1:6379/1
+
+STORAGE_BACKEND=local
+LOCAL_STORAGE_PATH=${UPLOAD_DIR}
 
 S3_ENDPOINT=http://127.0.0.1:9000
 S3_PUBLIC_ENDPOINT=http://127.0.0.1:9000
@@ -232,7 +138,7 @@ S3_BUCKET=fde-forge
 S3_REGION=us-east-1
 S3_USE_SSL=false
 
-OPENAI_API_KEY=${existing_openai}
+OPENAI_API_KEY=
 OPENAI_MODEL=gpt-4o-mini
 OPENAI_EMBEDDING_MODEL=text-embedding-3-small
 AI_DEFAULT_PROVIDER=bedrock
@@ -261,226 +167,164 @@ SEED_ADMIN_EMAIL=saurabh@fdeforge.example.com
 SEED_ADMIN_PASSWORD=admin123
 SEED_LEARNER_PASSWORD=ChangeMeLearner123!
 EOF
-
-  cp "$NATIVE_ENV" "$COMPOSE_ENV"
-  ok "Wrote $COMPOSE_ENV (Bedrock only for TCS Mac)"
+  print_success "Environment file created (.env — SQLite + Bedrock)"
 }
 
-setup_postgres_native() {
-  resolve_psql || die "psql required. Set PSQL_PATH=/path/to/psql and re-run."
-  have createdb || warn "createdb not on PATH — will create DB via psql"
-
-  # If brew Postgres exists, prefer it — but never required
-  if (( HAS_BREW == 1 )); then
-    local pg_prefix
-    pg_prefix="$(brew --prefix postgresql@16 2>/dev/null || brew --prefix postgresql 2>/dev/null || true)"
-    if [[ -n "${pg_prefix:-}" && -d "$pg_prefix/bin" ]]; then
-      export PATH="$pg_prefix/bin:$PATH"
-      resolve_psql || true
-    fi
-    if brew services list 2>/dev/null | grep -Eq "postgresql(@[0-9]+)?.*started"; then
-      ok "Postgres brew service already running"
-    elif brew list --versions postgresql@16 >/dev/null 2>&1; then
-      brew services start postgresql@16 2>/dev/null || true
-    fi
+install_python_deps() {
+  print_status "Installing Python dependencies..."
+  local PYTHON_CMD
+  PYTHON_CMD="$(select_python_command)"
+  if [[ -z "$PYTHON_CMD" ]]; then
+    die "Need Python 3.11+ (3.12 recommended). Set PYTHON_BIN=python3.12 if needed."
   fi
-
-  local db_user="${FDE_DB_USER:-fde}"
-  local db_pass="${FDE_DB_PASSWORD:-fde_secret}"
-  local db_name="${FDE_DB_NAME:-fde_forge}"
-  local db_host="${FDE_DB_HOST:-127.0.0.1}"
-  local db_port="${FDE_DB_PORT:-5432}"
-
-  log "Ensuring Postgres role/db (${db_user}@${db_host}:${db_port}/${db_name})..."
-
-  if ! PGPASSWORD="$db_pass" psql_cmd -h "$db_host" -p "$db_port" -U "$db_user" -d "$db_name" -c 'SELECT 1' >/dev/null 2>&1; then
-    if psql_cmd -h "$db_host" -p "$db_port" -d postgres -tAc "SELECT 1" >/dev/null 2>&1; then
-      psql_cmd -h "$db_host" -p "$db_port" -d postgres -v ON_ERROR_STOP=1 <<SQL || true
-DO \$\$
-BEGIN
-  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '${db_user}') THEN
-    CREATE ROLE ${db_user} LOGIN PASSWORD '${db_pass}' SUPERUSER;
-  ELSE
-    ALTER ROLE ${db_user} WITH LOGIN PASSWORD '${db_pass}';
-  END IF;
-END
-\$\$;
-SELECT 'CREATE DATABASE ${db_name} OWNER ${db_user}'
-WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = '${db_name}')\gexec
-SQL
-    elif psql_cmd -d postgres -tAc "SELECT 1" >/dev/null 2>&1; then
-      psql_cmd -d postgres -v ON_ERROR_STOP=1 <<SQL || true
-DO \$\$
-BEGIN
-  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '${db_user}') THEN
-    CREATE ROLE ${db_user} LOGIN PASSWORD '${db_pass}' SUPERUSER;
-  ELSE
-    ALTER ROLE ${db_user} WITH LOGIN PASSWORD '${db_pass}';
-  END IF;
-END
-\$\$;
-SELECT 'CREATE DATABASE ${db_name} OWNER ${db_user}'
-WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = '${db_name}')\gexec
-SQL
-    else
-      die "Cannot connect to Postgres. Start company Postgres or set FDE_DB_HOST/USER/PASSWORD."
-    fi
-  fi
-
-  PGPASSWORD="$db_pass" psql_cmd -h "$db_host" -p "$db_port" -U "$db_user" -d "$db_name" -c 'CREATE EXTENSION IF NOT EXISTS "uuid-ossp";' >/dev/null
-  PGPASSWORD="$db_pass" psql_cmd -h "$db_host" -p "$db_port" -U "$db_user" -d "$db_name" -c 'CREATE EXTENSION IF NOT EXISTS vector;' >/dev/null 2>&1 \
-    || warn "vector extension failed — install pgvector for your Postgres if RAG features need it"
-  PGPASSWORD="$db_pass" psql_cmd -h "$db_host" -p "$db_port" -U "$db_user" -d "$db_name" -c 'CREATE EXTENSION IF NOT EXISTS pg_trgm;' >/dev/null
-  ok "Postgres ready (${db_name} @ ${db_host}:${db_port})"
-}
-
-setup_redis_native() {
-  if have redis-cli && redis-cli ping >/dev/null 2>&1; then
-    ok "Redis already running (6379)"
-    return
-  fi
-
-  if have redis-server; then
-    log "Starting redis-server..."
-    nohup redis-server --daemonize no --port 6379 >"$LOG_DIR/redis.log" 2>&1 &
-    echo $! >"$PID_DIR/redis.pid"
-    sleep 1
-    if redis-cli ping >/dev/null 2>&1; then
-      ok "Redis started"
-      return
-    fi
-  fi
-
-  if (( HAS_BREW == 1 )); then
-    optional_brew_install redis || true
-    brew services start redis 2>/dev/null || true
-    sleep 1
-    if redis-cli ping >/dev/null 2>&1; then
-      ok "Redis ready via Homebrew"
-      return
-    fi
-  fi
-
-  warn "Redis not found/running — Celery/background jobs (resume extract) will fail until Redis is available."
-  warn "App API + Web will still start. Install redis-server on PATH or start company Redis on :6379."
-}
-
-setup_minio_native() {
-  if curl -sf "http://127.0.0.1:9000/minio/health/live" >/dev/null 2>&1; then
-    ok "MinIO already running (:9000)"
-    return
-  fi
-
-  if ! have minio; then
-    if (( HAS_BREW == 1 )); then
-      brew install minio/stable/minio 2>/dev/null || brew install minio 2>/dev/null || true
-    fi
-  fi
-
-  if ! have minio; then
-    warn "MinIO not on PATH — resume/file uploads need object storage on :9000."
-    warn "API + Web will still start. Install minio binary or point S3_* in .env to AWS S3."
-    return
-  fi
-
-  mkdir -p "$RUN_DIR/minio-data"
-  log "Starting MinIO..."
-  nohup env MINIO_ROOT_USER=minioadmin MINIO_ROOT_PASSWORD=minioadmin \
-    minio server "$RUN_DIR/minio-data" --address ":9000" --console-address ":9001" \
-    >"$LOG_DIR/minio.log" 2>&1 &
-  echo $! >"$PID_DIR/minio.pid"
-  sleep 2
-
-  if have mc; then
-    mc alias set local http://127.0.0.1:9000 minioadmin minioadmin >/dev/null 2>&1 || true
-    mc mb -p local/fde-forge >/dev/null 2>&1 || true
-  elif have aws; then
-    AWS_ACCESS_KEY_ID=minioadmin AWS_SECRET_ACCESS_KEY=minioadmin \
-      aws --endpoint-url http://127.0.0.1:9000 s3 mb s3://fde-forge >/dev/null 2>&1 || true
-  fi
-  ok "MinIO ready (http://127.0.0.1:9000)"
-}
-
-setup_python_native() {
-  local py=""
-  if have python3.12; then
-    py="$(command -v python3.12)"
-  elif have python3; then
-    py="$(command -v python3)"
-  else
-    die "Python 3 not found. Install company Python 3.12+ (no Homebrew)."
-  fi
-
-  local ver
-  ver="$("$py" -c 'import sys; print("%d.%d"%sys.version_info[:2])')"
-  log "Python: $($py --version) ($py)"
-  "$py" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)' \
-    || die "Python 3.11+ required (found $ver)"
+  print_success "Using $($PYTHON_CMD --version) via '${PYTHON_CMD}'"
 
   if [[ ! -d "$ROOT/apps/api/.venv" ]]; then
-    "$py" -m venv "$ROOT/apps/api/.venv" || die "python -m venv failed"
+    print_status "Creating Python virtual environment..."
+    "$PYTHON_CMD" -m venv "$ROOT/apps/api/.venv"
+    print_success "Virtual environment created"
+  else
+    print_status "Virtual environment already exists"
   fi
+
   # shellcheck disable=SC1091
   source "$ROOT/apps/api/.venv/bin/activate"
-  pip install -q --upgrade pip
-  log "Installing API package into venv..."
-  pip install -q -e "$ROOT/apps/api[dev]"
-  ok "Python venv ready"
+  pip install --upgrade pip
+  print_status "Installing API package..."
+  pip install -e "$ROOT/apps/api[dev]"
+  print_success "Python dependencies installed"
 }
 
-setup_node_native() {
-  have node || die "Node.js not found (required). npm alone is not enough — need node on PATH."
-  have npm || die "npm not found. Node/npm must be installed (you said npm is installed — check PATH)."
+install_node_deps() {
+  print_status "Installing Node.js dependencies..."
+  command_exists node || die "Node.js is not installed. Install Node 18+ (npm comes with it)."
+  command_exists npm || die "npm is not installed / not on PATH."
 
-  log "Node: $(node --version) / npm $(npm --version)"
-  log "Installing web dependencies with npm..."
+  local node_version
+  node_version="$(node -v | cut -d'v' -f2)"
+  print_success "Node.js version $node_version / npm $(npm --version)"
+
   (cd "$ROOT/apps/web" && npm install)
-  ok "Web dependencies ready (npm)"
+  print_success "Node.js dependencies installed"
 }
 
-migrate_and_seed_native() {
+init_sqlite_and_seed() {
+  print_status "Initializing SQLite schema + demo seed..."
   # shellcheck disable=SC1091
   source "$ROOT/apps/api/.venv/bin/activate"
-  export PYTHONPATH="$ROOT/apps/api:$ROOT:${PYTHONPATH:-}"
   set -a
   # shellcheck disable=SC1090
   source "$COMPOSE_ENV"
   set +a
+  export PYTHONPATH="$ROOT/apps/api:$ROOT"
 
-  log "Running Alembic migrations..."
-  (cd "$ROOT/apps/api" && alembic -c alembic.ini upgrade head)
-  log "Seeding demo data..."
-  (cd "$ROOT" && PYTHONPATH="$ROOT/apps/api:$ROOT" python -m scripts.seed) || warn "Seed had warnings (often OK if already seeded)"
-  ok "DB migrated + seeded"
+  # Clear settings cache by using a fresh process
+  (cd "$ROOT" && python -m scripts.init_sqlite)
+  (cd "$ROOT" && python -m scripts.seed) || print_warning "Seed had warnings (OK if already seeded)"
+  print_success "SQLite DB ready: $DB_FILE"
 }
 
-start_api_native() {
-  if [[ -f "$PID_DIR/api.pid" ]] && kill -0 "$(cat "$PID_DIR/api.pid")" 2>/dev/null; then
-    ok "API already running (pid $(cat "$PID_DIR/api.pid"))"
+check_ports() {
+  print_status "Checking if required ports are available..."
+  if lsof -Pi :8000 -sTCP:LISTEN -t >/dev/null 2>&1; then
+    print_warning "Port 8000 is already in use. API may not start properly."
+  else
+    print_success "Port 8000 is available"
+  fi
+  if lsof -Pi :5173 -sTCP:LISTEN -t >/dev/null 2>&1; then
+    print_warning "Port 5173 is already in use. Web may not start properly."
+  else
+    print_success "Port 5173 is available"
+  fi
+}
+
+check_bedrock() {
+  if [[ -f "$HOME/.aws/credentials" ]] || [[ -d "$HOME/.aws" ]]; then
+    print_success "AWS credentials found — Bedrock will use ~/.aws"
+  else
+    print_warning "No ~/.aws found — AI features need Bedrock credentials (aws configure)."
+  fi
+}
+
+create_start_scripts() {
+  print_status "Creating start scripts..."
+
+  cat > "$ROOT/start_backend.sh" <<EOF
+#!/bin/bash
+cd "$ROOT"
+set -a
+source "$COMPOSE_ENV"
+set +a
+source "$ROOT/apps/api/.venv/bin/activate"
+export PYTHONPATH="$ROOT/apps/api:$ROOT"
+cd "$ROOT/apps/api"
+uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+EOF
+
+  cat > "$ROOT/start_frontend.sh" <<EOF
+#!/bin/bash
+cd "$ROOT/apps/web"
+export VITE_API_URL=http://localhost:8000
+export VITE_APP_NAME="FDE Forge AI"
+npm run dev -- --host 0.0.0.0 --port 5173
+EOF
+
+  cat > "$ROOT/start_all.sh" <<EOF
+#!/bin/bash
+set -e
+cd "$ROOT"
+echo "Starting FDE Forge AI (SQLite / no Docker)..."
+
+set -a
+source "$COMPOSE_ENV"
+set +a
+source "$ROOT/apps/api/.venv/bin/activate"
+export PYTHONPATH="$ROOT/apps/api:$ROOT"
+
+cd "$ROOT/apps/api"
+uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload &
+BACKEND_PID=\$!
+
+sleep 2
+cd "$ROOT/apps/web"
+export VITE_API_URL=http://localhost:8000
+export VITE_APP_NAME="FDE Forge AI"
+npm run dev -- --host 0.0.0.0 --port 5173 &
+FRONTEND_PID=\$!
+
+echo "Backend PID: \$BACKEND_PID"
+echo "Frontend PID: \$FRONTEND_PID"
+echo "Frontend: http://localhost:5173"
+echo "API docs: http://localhost:8000/docs"
+echo "Login: Saurabh / admin123 / org acme-health"
+echo "Press Ctrl+C to stop"
+trap 'kill \$BACKEND_PID \$FRONTEND_PID 2>/dev/null' EXIT
+wait
+EOF
+
+  chmod +x "$ROOT/start_backend.sh" "$ROOT/start_frontend.sh" "$ROOT/start_all.sh"
+  print_success "Start scripts created (start_all.sh / start_backend.sh / start_frontend.sh)"
+}
+
+start_services_background() {
+  if [[ "${SKIP_START:-0}" == "1" ]]; then
+    print_success "Install complete (SKIP_START=1). Run ./start_all.sh when ready."
     return
   fi
-  log "Starting API on :8000..."
+
+  print_status "Starting API + web in background..."
   (
-    # shellcheck disable=SC1091
-    source "$ROOT/apps/api/.venv/bin/activate"
     set -a
     # shellcheck disable=SC1090
     source "$COMPOSE_ENV"
     set +a
+    # shellcheck disable=SC1091
+    source "$ROOT/apps/api/.venv/bin/activate"
     export PYTHONPATH="$ROOT/apps/api:$ROOT"
     cd "$ROOT/apps/api"
-    nohup uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload \
-      >"$LOG_DIR/api.log" 2>&1 &
+    nohup uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload >"$LOG_DIR/api.log" 2>&1 &
     echo $! >"$PID_DIR/api.pid"
   )
-}
-
-start_web_native() {
-  if [[ -f "$PID_DIR/web.pid" ]] && kill -0 "$(cat "$PID_DIR/web.pid")" 2>/dev/null; then
-    ok "Web already running (pid $(cat "$PID_DIR/web.pid"))"
-    return
-  fi
-  log "Starting web with npm on :5173..."
   (
     cd "$ROOT/apps/web"
     export VITE_API_URL=http://localhost:8000
@@ -488,93 +332,62 @@ start_web_native() {
     nohup npm run dev -- --host 0.0.0.0 --port 5173 >"$LOG_DIR/web.log" 2>&1 &
     echo $! >"$PID_DIR/web.pid"
   )
+
+  wait_http "http://127.0.0.1:8000/api/v1/health" "API" 90 || true
+  wait_http "http://127.0.0.1:5173" "Web" 90 || true
 }
 
-start_worker_native() {
-  if [[ -f "$PID_DIR/worker.pid" ]] && kill -0 "$(cat "$PID_DIR/worker.pid")" 2>/dev/null; then
-    ok "Celery worker already running (pid $(cat "$PID_DIR/worker.pid"))"
-    return
-  fi
-  if ! have redis-cli || ! redis-cli ping >/dev/null 2>&1; then
-    warn "Skipping Celery worker (Redis not available)"
-    return
-  fi
-  log "Starting Celery worker..."
-  (
-    # shellcheck disable=SC1091
-    source "$ROOT/apps/api/.venv/bin/activate"
-    set -a
-    # shellcheck disable=SC1090
-    source "$COMPOSE_ENV"
-    set +a
-    export PYTHONPATH="$ROOT/apps/api:$ROOT"
-    cd "$ROOT/apps/api"
-    nohup celery -A app.worker.celery_app worker --loglevel=info --concurrency=2 \
-      >"$LOG_DIR/worker.log" 2>&1 &
-    echo $! >"$PID_DIR/worker.pid"
-  )
-}
-
-check_bedrock_hint() {
-  if [[ ! -f "$HOME/.aws/credentials" ]] && [[ -z "${AWS_ACCESS_KEY_ID:-}" ]] && [[ ! -d "$HOME/.aws" ]]; then
-    warn "No AWS credentials found — Bedrock AI needs ~/.aws (you said TCS Mac is already configured)."
-  else
-    ok "AWS credentials present — Bedrock is the only AI provider on this Mac"
-  fi
+show_final_instructions() {
+  echo ""
+  echo "=========================================="
+  echo "FDE Forge AI setup complete (TCS / SQLite)"
+  echo "=========================================="
+  echo ""
+  echo "  Frontend:  http://localhost:5173"
+  echo "  API docs:  http://localhost:8000/docs"
+  echo "  Login:     Saurabh / admin123 / org acme-health"
+  echo "  Database:  $DB_FILE"
+  echo "  Uploads:   $UPLOAD_DIR"
+  echo "  AI:        Bedrock via ~/.aws"
+  echo ""
+  echo "  Start later:  ./start_all.sh"
+  echo "  Stop:         ./scripts/stop.sh"
+  echo "  Logs:         $LOG_DIR"
+  echo ""
 }
 
 run_native() {
-  log "Mode: NATIVE (TCS Mac — no Docker; Homebrew NOT required)"
-  if (( HAS_BREW == 1 )); then
-    ok "Homebrew detected (optional only — will use if needed)"
-  else
-    ok "No Homebrew — using system npm / Node / Python / Postgres"
-  fi
-
-  have node && have npm || die "Need both node and npm on PATH"
-  have python3 || have python3.12 || die "Need python3 on PATH"
-  resolve_psql || die "Need psql. Run with PSQL_PATH=/path/to/psql FORCE_MODE=native ./setup.sh"
-
-  write_native_env
-  setup_postgres_native
-  setup_redis_native
-  setup_minio_native
-  setup_python_native
-  setup_node_native
-  migrate_and_seed_native
-  check_bedrock_hint
-
-  if [[ "${SKIP_START:-0}" == "1" ]]; then
-    ok "Install complete (SKIP_START=1). Start later with: FORCE_MODE=native ./setup.sh"
-    return
-  fi
-
-  start_api_native
-  start_worker_native
-  start_web_native
-  wait_http "http://127.0.0.1:8000/api/v1/health" "API" 90 || true
-  wait_http "http://127.0.0.1:5173" "Web" 90 || true
-
+  echo "=========================================="
+  echo "FDE Forge AI — Setup Without Docker"
+  echo "TCS Mac · SQLite · npm · Bedrock"
+  echo "=========================================="
   echo ""
-  ok "FDE Forge AI is running (native / no Homebrew)"
-  echo "  Web UI:   http://localhost:5173"
-  echo "  API docs: http://localhost:8000/docs"
-  echo "  Login:    Saurabh / admin123 / org acme-health"
-  echo "  Logs:     $LOG_DIR"
-  echo "  Stop:     ./scripts/stop.sh"
-  echo "  AI:       Bedrock only — docs/BEDROCK.md"
+
+  [[ -f "$ROOT/apps/api/pyproject.toml" && -f "$ROOT/apps/web/package.json" ]] \
+    || die "Run this script from the fde-forge-ai repo root"
+
+  write_sqlite_env
+  install_python_deps
+  install_node_deps
+  init_sqlite_and_seed
+  check_ports
+  check_bedrock
+  create_start_scripts
+  start_services_background
+  show_final_instructions
 }
 
 ensure_docker_env_ec2() {
   if [[ ! -f "$COMPOSE_ENV" ]]; then
     cp "$ROOT/.env.example" "$COMPOSE_ENV"
-    ok "Created .env from .env.example"
+    print_success "Created .env from .env.example"
   fi
   for kv in \
     "BEDROCK_ENABLED=true" \
     "AI_DEFAULT_PROVIDER=bedrock" \
     "DEFAULT_LLM_PROVIDER=bedrock" \
     "ENABLED_LLM_PROVIDERS=bedrock" \
+    "STORAGE_BACKEND=s3" \
     "AWS_REGION=us-east-1" \
     "BEDROCK_MODEL_ID=us.anthropic.claude-sonnet-4-5-20250929-v1:0"; do
     key="${kv%%=*}"
@@ -586,41 +399,25 @@ ensure_docker_env_ec2() {
     fi
   done
   rm -f "$COMPOSE_ENV.bak" 2>/dev/null || true
-  ok "EC2/Docker .env: Bedrock only (use instance IAM role — no AWS keys in .env)"
 }
 
 run_docker() {
-  log "Mode: DOCKER (AWS EC2 / machines with Docker)"
-  have docker || die "Docker not found"
+  print_status "Mode: DOCKER (AWS EC2)"
+  command_exists docker || die "Docker not found"
   docker compose version >/dev/null 2>&1 || die "docker compose plugin required"
   ensure_docker_env_ec2
-
   local worker_replicas="${WORKER_REPLICAS:-2}"
-  log "Building and starting stack (worker replicas=${worker_replicas})..."
+  print_status "Building and starting stack (worker replicas=${worker_replicas})..."
   docker compose up --build -d --scale "worker=${worker_replicas}"
-
-  log "Waiting for API health..."
   wait_http "http://127.0.0.1:8000/api/v1/health" "API" 120 || true
   wait_http "http://127.0.0.1:5173" "Web" 60 || true
-
-  echo ""
-  ok "FDE Forge AI is running (Docker)"
-  echo "  Web UI:   http://localhost:5173"
-  echo "  API docs: http://localhost:8000/docs"
-  echo "  Login:    Saurabh / admin123 / org acme-health"
-  echo "  Workers:  ${worker_replicas} Celery replicas"
-  echo ""
-  echo "Scale further on EC2:"
-  echo "  WORKER_REPLICAS=4 ./setup.sh"
-  echo "  docker compose up -d --scale worker=4"
-  echo "  docker compose ps"
-  echo "  docker compose logs -f api"
+  print_success "Docker stack running — http://localhost:5173"
 }
 
 # --- main ---
 MODE="$(detect_mode)"
-log "FDE Forge AI setup — detected mode: $MODE"
-log "Repo: $ROOT"
+print_status "Detected mode: $MODE"
+print_status "Repo: $ROOT"
 
 case "$MODE" in
   native) run_native ;;
