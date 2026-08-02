@@ -1,0 +1,21 @@
+Alex Rivera
+AI Engineer | Forward Deployed Engineer Candidate
+
+Summary
+Software engineer with 6 years of experience building Python APIs, React frontends, and generative AI systems. Delivered RAG solutions and healthcare interoperability prototypes using FHIR.
+
+Experience
+Senior AI Engineer, Contoso Health — 2021–Present
+- Built RAG pipelines with PostgreSQL/pgvector and OpenAI embeddings
+- Implemented FastAPI microservices for claims analytics
+- Facilitated discovery workshops with payer operations stakeholders
+
+Software Engineer, Northwind Labs — 2018–2021
+- Developed TypeScript React applications and REST APIs
+- Automated data pipelines for clinical trial metadata (CDISC familiarity)
+
+Skills
+Python, FastAPI, React, TypeScript, PostgreSQL, RAG Engineering, Generative AI, FHIR, HIPAA awareness, Customer Discovery, Prompt Engineering, Docker, AWS
+
+Certifications
+AWS Certified Developer Associate — 2022

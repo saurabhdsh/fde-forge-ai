@@ -1,0 +1,204 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: fde-postgres
+    environment:
+      POSTGRES_USER: fde
+      POSTGRES_PASSWORD: fde_secret
+      POSTGRES_DB: fde_forge
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./infrastructure/docker/postgres-init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fde -d fde_forge"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: fde-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  minio:
+    image: minio/minio:latest
+    container_name: fde-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+
+  minio-init:
+    image: minio/mc:latest
+    container_name: fde-minio-init
+    depends_on:
+      minio:
+        condition: service_started
+    entrypoint: >
+      /bin/sh -c "
+      sleep 3;
+      mc alias set local http://minio:9000 minioadmin minioadmin;
+      mc mb -p local/fde-forge || true;
+      mc anonymous set download local/fde-forge/public || true;
+      exit 0;
+      "
+
+  mailhog:
+    image: mailhog/mailhog:latest
+    container_name: fde-mailhog
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+
+  api:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile.api
+    container_name: fde-api
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://fde:fde_secret@postgres:5432/fde_forge
+      DATABASE_URL_SYNC: postgresql://fde:fde_secret@postgres:5432/fde_forge
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      S3_ENDPOINT: http://minio:9000
+      SMTP_HOST: mailhog
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+      BEDROCK_ENABLED: ${BEDROCK_ENABLED:-false}
+      DEFAULT_LLM_PROVIDER: ${DEFAULT_LLM_PROVIDER:-openai}
+      AI_DEFAULT_PROVIDER: ${AI_DEFAULT_PROVIDER:-openai}
+      BEDROCK_MODEL_ID: ${BEDROCK_MODEL_ID:-us.anthropic.claude-sonnet-4-5-20250929-v1:0}
+      ENABLED_LLM_PROVIDERS: ${ENABLED_LLM_PROVIDERS:-openai,bedrock}
+      # Prefer mounting ~/.aws; optional key pass-through for environments without a mount:
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./apps/api:/app/apps/api
+      - ./packages:/app/packages
+      - ./scripts:/app/scripts
+      - ${HOME}/.aws:/root/.aws:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_started
+      mailhog:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  worker:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile.worker
+    # No fixed container_name — required for: docker compose up --scale worker=N
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://fde:fde_secret@postgres:5432/fde_forge
+      DATABASE_URL_SYNC: postgresql://fde:fde_secret@postgres:5432/fde_forge
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      S3_ENDPOINT: http://minio:9000
+      SMTP_HOST: mailhog
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+      BEDROCK_ENABLED: ${BEDROCK_ENABLED:-false}
+      DEFAULT_LLM_PROVIDER: ${DEFAULT_LLM_PROVIDER:-openai}
+      AI_DEFAULT_PROVIDER: ${AI_DEFAULT_PROVIDER:-openai}
+      BEDROCK_MODEL_ID: ${BEDROCK_MODEL_ID:-us.anthropic.claude-sonnet-4-5-20250929-v1:0}
+      ENABLED_LLM_PROVIDERS: ${ENABLED_LLM_PROVIDERS:-openai,bedrock}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+    volumes:
+      - ./apps/api:/app/apps/api
+      - ./apps/worker:/app/apps/worker
+      - ./packages:/app/packages
+      - ${HOME}/.aws:/root/.aws:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+      minio:
+        condition: service_started
+
+  web:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile.web
+    container_name: fde-web
+    environment:
+      VITE_API_URL: http://localhost:8000
+      VITE_APP_NAME: FDE Forge AI
+      VITE_APP_TAGLINE: Transform AI Engineers into Customer-Ready Forward Deployed Engineers.
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./apps/web:/app
+      - /app/node_modules
+    # Keep anonymous node_modules volume in sync with package.json after dependency changes
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0 --port 5173"
+    depends_on:
+      api:
+        condition: service_healthy
+
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    container_name: fde-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./infrastructure/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    depends_on:
+      - api
+
+  grafana:
+    image: grafana/grafana:11.2.0
+    container_name: fde-grafana
+    ports:
+      - "3001:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./infrastructure/monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+    depends_on:
+      - prometheus
+
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:
+  prometheus_data:
+  grafana_data:
