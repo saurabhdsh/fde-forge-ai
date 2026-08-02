@@ -10,20 +10,15 @@ FDE Forge AI supports **OpenAI** and **AWS Bedrock** (Claude via Converse). Whic
 
 ## Quick Bedrock access check (Mac)
 
-Before generating domain courses (which can take several minutes), verify credentials:
-
 ```bash
 cd fde-forge-ai
-set -a && source .env && set +a
-source apps/api/.venv/bin/activate
-PYTHONPATH=apps/api:. python -m scripts.check_bedrock
+chmod +x check_bedrock.sh
+./check_bedrock.sh
 ```
 
-Or while the API is running (signed in), open:
+Or while the API is running (signed in): `GET /api/v1/ai/bedrock/check` at http://localhost:8000/docs
 
-`GET /api/v1/ai/bedrock/check` → http://localhost:8000/docs
-
-You should see `"ok": true` and a short `BEDROCK_OK` reply. If this fails, course generation will also fail/timeout.
+You should see `OK: Bedrock Converse succeeded`. If this fails, course generation will also fail/timeout.
 
 ## Verified Bedrock model
 
